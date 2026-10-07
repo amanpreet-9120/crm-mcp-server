@@ -30,6 +30,18 @@ from . import db, logic
 
 log = logging.getLogger("crm_mcp")
 
+# Where the data lives. Every backend exposes the same data-access functions as db.py.
+BACKEND = os.environ.get("CRM_BACKEND", "sqlite").lower()
+# Backend errors (auth, permissions, outages) are passed to the model as readable ToolErrors.
+if BACKEND == "hubspot":
+    from . import hubspot as store
+    BACKEND_ERRORS: tuple[type[Exception], ...] = (store.HubSpotError,)
+elif BACKEND == "sqlite":
+    store = db
+    BACKEND_ERRORS = ()
+else:
+    raise SystemExit(f"Unknown CRM_BACKEND '{BACKEND}'. Use sqlite or hubspot.")
+
 LOG_PATH = Path(os.environ.get("CRM_LOG_PATH", Path(__file__).resolve().parents[2] / "logs" / "tool_calls.jsonl"))
 READ_ONLY = os.environ.get("CRM_READ_ONLY", "0") == "1"
 
@@ -79,6 +91,9 @@ def observed(fn):
         except ToolError as e:
             ok, error = False, str(e)
             raise
+        except BACKEND_ERRORS as e:
+            ok, error = False, str(e)
+            raise ToolError(f"The CRM could not be reached: {e}. Tell the user; check the key and its scopes.") from None
         except Exception as e:  # unexpected: still log it, then let the SDK hide details from the client
             ok, error = False, f"{type(e).__name__}: {e}"
             raise
@@ -103,7 +118,7 @@ def observed(fn):
 def _resolve_owner(owner: str | None) -> str | None:
     if not owner:
         return None
-    owners = db.list_owners()
+    owners = store.list_owners()
     matches = [o for o in owners if owner.lower() in o.lower()]
     if len(matches) == 1:
         return matches[0]
@@ -112,15 +127,15 @@ def _resolve_owner(owner: str | None) -> str | None:
 
 def _resolve_company(company: str) -> dict:
     if company.strip().isdigit():
-        row = db.get_company(int(company))
+        row = store.get_company(int(company))
         if row:
             return row
-    names = db.list_company_names()
+    names = store.list_company_names()
     exact = [n for n in names if n.lower() == company.lower()]
     partial = [n for n in names if company.lower() in n.lower()]
     pick = exact or (partial if len(partial) == 1 else [])
     if pick:
-        return db.get_company_by_name(pick[0])
+        return store.get_company_by_name(pick[0])
     hint = logic.suggest(company, names)
     raise ToolError(
         f"No single company matches '{company}'."
@@ -129,7 +144,7 @@ def _resolve_company(company: str) -> dict:
 
 
 def _get_deal(deal_id: int) -> dict:
-    deal = db.get_deal(deal_id)
+    deal = store.get_deal(deal_id)
     if not deal:
         raise ToolError(f"Deal {deal_id} does not exist. Find valid ids with search_deals or get_account.")
     return deal
@@ -189,7 +204,7 @@ def search_deals(
     """
     today = db.today()
     limit = max(1, min(limit, 50))
-    rows = db.find_deals(
+    rows = store.find_deals(
         company=company,
         stages=[stage] if stage else None,
         exclude_stages=None if stage or include_closed else ["won", "lost"],
@@ -217,9 +232,9 @@ def get_account(company: str) -> dict[str, Any]:
     """
     today = db.today()
     co = _resolve_company(company)
-    contacts = db.list_contacts(co["id"])
-    deals = db.find_deals(company_id=co["id"], sort_by="value")
-    acts = db.recent_activities(co["id"], limit=10)
+    contacts = store.list_contacts(co["id"])
+    deals = store.find_deals(company_id=co["id"], sort_by="value")
+    acts = store.recent_activities(co["id"], limit=10)
     deal_rows = []
     for d in deals:
         row = _compact(d, today)
@@ -239,7 +254,7 @@ def get_pipeline_summary(owner: str | None = None) -> dict[str, Any]:
     owner: optional rep name to scope to one person. Use this for any totals - do not sum deals yourself.
     """
     resolved = _resolve_owner(owner)
-    deals = db.find_deals(owner=resolved)
+    deals = store.find_deals(owner=resolved)
     return {"owner": resolved or "all", "as_of": db.today().isoformat(), **logic.pipeline_summary(deals)}
 
 
@@ -253,7 +268,7 @@ def get_deals_needing_attention(owner: str | None = None, min_value: int = 0, li
     """
     today = db.today()
     limit = max(1, min(limit, 50))
-    deals = db.find_deals(exclude_stages=["won", "lost"], min_value=min_value, owner=_resolve_owner(owner))
+    deals = store.find_deals(exclude_stages=["won", "lost"], min_value=min_value, owner=_resolve_owner(owner))
     flagged = []
     for d in deals:
         att = logic.assess_deal(d, today)
@@ -303,7 +318,7 @@ def log_activity(
     deal = _get_deal(deal_id)
     if deal["stage"] in ("won", "lost") and next_step:
         raise ToolError(f"Deal {deal_id} is {deal['stage']}; it can't have a next step. Log the activity without one.")
-    activity_id = db.add_activity(deal_id, type, summary, on=today, by=logged_by,
+    activity_id = store.add_activity(deal_id, type, summary, on=today, by=logged_by,
                                   next_step=next_step, next_step_date=next_step_date)
     updated = _get_deal(deal_id)
     return {"activity_id": activity_id, "deal": _compact(updated, today),
@@ -362,7 +377,7 @@ def update_deal(
             "next": "Show this to the user. If they approve, call update_deal again with the same arguments and confirm=true.",
         }
     closing = {"next_step": None, "next_step_date": None} if changes.get("stage") in ("won", "lost") else {}
-    db.update_deal(deal_id, {**changes, **closing})
+    store.update_deal(deal_id, {**changes, **closing})
     updated = _get_deal(deal_id)
     return {"status": "updated", "changes": diff, "deal": _compact(updated, today)}
 
@@ -409,7 +424,7 @@ async def landing(_request):
 @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
 async def health(_request):
     from starlette.responses import JSONResponse
-    return JSONResponse({"status": "ok", "read_only": READ_ONLY, "today": db.today().isoformat()})
+    return JSONResponse({"status": "ok", "read_only": READ_ONLY, "backend": BACKEND, "today": db.today().isoformat()})
 
 
 @mcp.custom_route("/stats", methods=["GET"], include_in_schema=False)
@@ -461,15 +476,18 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    if args.reset or os.environ.get("CRM_RESET_ON_START") == "1" or not db.DEFAULT_DB_PATH.exists():
+    if BACKEND == "sqlite" and (args.reset or os.environ.get("CRM_RESET_ON_START") == "1"
+                                or not db.DEFAULT_DB_PATH.exists()):
         counts = db.reset_and_seed()
         log.info("seeded demo data: %s", counts)
+    elif args.reset:
+        log.warning("--reset only applies to the sqlite backend; use scripts/seed_hubspot.py --reset for HubSpot")
 
     if args.transport == "stdio":
         mcp.run("stdio")
     else:
         import uvicorn
-        log.info("serving MCP at http://%s:%s/mcp (auth: %s)", args.host, args.port,
+        log.info("serving MCP at http://%s:%s/mcp (backend: %s, auth: %s)", args.host, args.port, BACKEND,
                  "bearer token" if os.environ.get("CRM_MCP_TOKEN") else "none")
         uvicorn.run(build_http_app(args.host), host=args.host, port=args.port, log_level="warning")
 

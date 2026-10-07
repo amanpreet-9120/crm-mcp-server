@@ -4,6 +4,8 @@ An MCP server that lets Claude work a B2B sales pipeline. Ask in plain English, 
 
 It runs locally (stdio) for Claude Desktop / Claude Code, or as a hosted HTTP endpoint anyone can connect to with one command.
 
+**Data sources:** a built-in SQLite demo (default) or a live **HubSpot** account (`CRM_BACKEND=hubspot`). Same tools, same answers.
+
 > **Demo data:** 24 fictional companies, 42 contacts, 44 deals and ~130 activities, regenerated deterministically with dates relative to today, so the demo always has the same story whenever you run it.
 
 ---
@@ -44,7 +46,7 @@ Requires Python 3.10+. On macOS the system `python3` is often 3.9; use e.g. `pyt
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                       # 14 tests, ~1s
+pytest                       # 26 tests, ~1s
 ```
 
 ### Connect to Claude Code (local)
@@ -100,6 +102,30 @@ claude mcp add --transport http crm https://YOUR-APP.onrender.com/mcp
 
 ---
 
+## Use it with HubSpot
+
+The same six tools run against a real HubSpot account. Deals, companies and contacts map to HubSpot objects, and activities are real HubSpot calls, emails, meetings and notes on the deal timeline.
+
+1. **Create a free HubSpot CRM account** (a normal account, not a developer account).
+2. **Create a Service Key:** Settings → Integrations → Service Keys. Give it read and write scopes for deals, companies and contacts (`crm.objects.deals.*`, `crm.objects.companies.*`, `crm.objects.contacts.*`), plus read and write schema scopes for the same three (`crm.schemas.deals.*`, `crm.schemas.companies.*`, `crm.schemas.contacts.*`) so the server can read stages and the loader can add its custom properties. If a scope is missing, the check script prints HubSpot's error naming it.
+3. **Put the key in `.env`** (copy `.env.example`):
+   ```
+   CRM_BACKEND=hubspot
+   HUBSPOT_SERVICE_KEY=your-key
+   ```
+4. **Load the demo data and check it:**
+   ```bash
+   python scripts/seed_hubspot.py          # --reset to replace earlier demo records
+   python scripts/check_hubspot.py         # read-only check through a real MCP client
+   ```
+5. Restart Claude Code / Desktop. The `crm` server now reads and writes HubSpot.
+
+**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the demo (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
+
+**Good to know:** demo dates are relative to the day you load them, so run `seed_hubspot.py --reset` before a demo. HubSpot search takes a few seconds to index changes; the server overlays deals it just wrote so follow-up questions still see the update. `--reset` only archives records the loader created (to HubSpot's recycle bin).
+
+---
+
 ## Project layout
 
 ```
@@ -107,13 +133,15 @@ src/crm_mcp/
   server.py   MCP tools, resource, prompt, logging, auth, HTTP app
   landing.html  page served at / for people who open the URL in a browser
   logic.py    business rules: staleness, priority, forecast (plain Python, unit-tested)
-  db.py       the only module that touches the database: data access functions, schema, demo seed
-tests/        tests that go through a real MCP client
-scripts/      HTTP smoke test
+  db.py       SQLite backend: data access functions, schema, demo seed
+  hubspot.py  HubSpot backend: the same functions over the HubSpot CRM API
+  hubspot_seed.py  loads the demo dataset into a HubSpot account
+tests/        tests that go through a real MCP client, incl. a fake HubSpot API for backend parity
+scripts/      HTTP smoke test, HubSpot loader and check
 DESIGN.md     why it's built this way
 DEMO.md       demo script
 ```
 
 ## Adapting it for a client
 
-Swap `db.py` for their real system (HubSpot, Pipedrive, Salesforce, Postgres). All data access goes through about ten plain functions there (`find_deals`, `get_deal`, `add_activity`, `update_deal`…), and `server.py` contains no SQL, so the tools, validation and error messages carry over unchanged. Keep those function signatures, and change the thresholds in `logic.py` to match their sales process. The design notes in [DESIGN.md](DESIGN.md) are the part that carries over.
+HubSpot works out of the box (above). For another system (Salesforce, Pipedrive, Postgres), add a module next to `db.py` and `hubspot.py` with the same functions. All data access goes through about ten plain functions (`find_deals`, `get_deal`, `add_activity`, `update_deal`…), and `server.py` contains no SQL, so the tools, validation and error messages carry over unchanged. Keep those function signatures, and change the thresholds in `logic.py` to match their sales process. The design notes in [DESIGN.md](DESIGN.md) are the part that carries over.
