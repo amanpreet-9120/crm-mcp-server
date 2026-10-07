@@ -1,6 +1,6 @@
 # 2-minute demo script
 
-Run `python -m crm_mcp --reset` once first (or deploy with `CRM_RESET_ON_START=1`) so the data is fresh. Connect the server to Claude Desktop or Claude Code, then go through these in order. Record the screen; this makes a strong Upwork portfolio video.
+Run `python -m crm_mcp --reset` once first (or deploy with `CRM_RESET_ON_START=1`) so the data is fresh. Connect the server to Claude Desktop or Claude Code, then go through these in order.
 
 **1. The hook (30s)**
 > Which deals over $40k need attention this week, and why?

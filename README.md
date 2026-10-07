@@ -38,7 +38,7 @@ Also: resource `crm://playbook` (the exact rules), prompt `weekly_pipeline_revie
 
 ## Run it
 
-Requires Python 3.10+.
+Requires Python 3.10+. On macOS the system `python3` is often 3.9; use e.g. `python3.13` from Homebrew.
 
 ```bash
 python3 -m venv .venv
