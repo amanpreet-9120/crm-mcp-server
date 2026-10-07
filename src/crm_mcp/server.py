@@ -18,6 +18,7 @@ import os
 import sys
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -232,9 +233,12 @@ def get_account(company: str) -> dict[str, Any]:
     """
     today = db.today()
     co = _resolve_company(company)
-    contacts = store.list_contacts(co["id"])
-    deals = store.find_deals(company_id=co["id"], sort_by="value")
-    acts = store.recent_activities(co["id"], limit=10)
+    # Independent lookups; run together so remote backends (HubSpot) answer in one round of latency.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        contacts_f = pool.submit(store.list_contacts, co["id"])
+        deals_f = pool.submit(store.find_deals, company_id=co["id"], sort_by="value")
+        acts_f = pool.submit(store.recent_activities, co["id"], limit=10)
+        contacts, deals, acts = contacts_f.result(), deals_f.result(), acts_f.result()
     deal_rows = []
     for d in deals:
         row = _compact(d, today)
@@ -482,6 +486,9 @@ def main() -> None:
         log.info("seeded demo data: %s", counts)
     elif args.reset:
         log.warning("--reset only applies to the sqlite backend; use scripts/seed_hubspot.py --reset for HubSpot")
+
+    if BACKEND == "hubspot":
+        store.warm_up()
 
     if args.transport == "stdio":
         mcp.run("stdio")

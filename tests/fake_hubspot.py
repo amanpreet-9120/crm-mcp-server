@@ -43,6 +43,9 @@ class FakeHubSpot:
     # ------------------------------------------------------------------ storage
 
     def create(self, obj_type: str, props: dict, associations: list | None = None) -> dict:
+        email = props.get("email")
+        if email and email.rsplit(".", 1)[-1] in ("example", "test", "invalid", "localhost"):
+            raise AssertionError(f"HubSpot rejects {email}: INVALID_EMAIL")
         self.next_id[obj_type] = self.next_id.get(obj_type, 0) + 1
         oid = self.next_id[obj_type]
         stored = {k: str(v) for k, v in props.items() if v not in (None, "")}

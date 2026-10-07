@@ -306,7 +306,7 @@ def reset_and_seed(path: Path | str | None = None, seed: int = 42) -> dict[str, 
         contact_id = 0
         contacts_by_company: dict[int, list[int]] = {}
         for company_id, (cname, *_rest) in enumerate(COMPANIES, start=1):
-            domain = cname.lower().replace("&", "and").split()[0] + ".example"
+            domain = cname.lower().replace("&", "and").split()[0] + ".example.com"
             for title, dm in rng.sample(TITLES, rng.randint(1, 3)):
                 contact_id += 1
                 first, last = rng.choice(FIRST), rng.choice(LAST)

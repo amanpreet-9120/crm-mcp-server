@@ -27,6 +27,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -106,6 +107,21 @@ def _request(method: str, path: str, body: dict | None = None, params: dict | No
             detail = e.read().decode(errors="replace")[:500]
             raise HubSpotError(f"HubSpot {method} {path} failed with {e.code}: {detail}") from None
     raise HubSpotError(f"HubSpot {method} {path} kept failing after retries")
+
+
+_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="hubspot")
+
+
+def _parallel(*calls):
+    """Run independent API calls at once (each HubSpot round trip is ~0.5 s) and return their results."""
+    futures = [_pool.submit(fn, *args) for fn, *args in calls]
+    return [f.result() for f in futures]
+
+
+def warm_up() -> None:
+    """Load the slow-changing lookups (stages, companies, industry labels, owners) in the background."""
+    for fn in (_stages, _companies, list_owners):
+        _pool.submit(fn)
 
 
 def _cached(key: str, load):
@@ -223,10 +239,10 @@ def _company(obj: dict) -> dict:
 
 
 def _industry_label(value: str | None) -> str:
-    if not value:
-        return ""
     labels = _cached("industry", lambda: {o["value"]: o["label"] for o in
                                            (_request("GET", f"{PROPERTIES}/companies/industry") or {}).get("options", [])})
+    if not value:
+        return ""
     return labels.get(value, value.replace("_", " ").title())
 
 
@@ -267,6 +283,8 @@ def _assoc(from_type: str, to_type: str, ids: list[int | str]) -> dict[int, list
 
 
 def _batch_read(obj_type: str, ids: list[int], props: list[str]) -> list[dict]:
+    if not ids:
+        return []
     out = []
     for chunk in _chunks(sorted(set(ids)), 100):
         res = _request("POST", f"{OBJECTS}/{obj_type}/batch/read",
@@ -283,6 +301,7 @@ def _chunks(items: list, n: int):
 def _companies() -> dict[int, dict]:
     """All companies, cached briefly (used for name lookup and suggestions). Capped at 2,000."""
     def load():
+        _pool.submit(_industry_label, "")  # warm the label map in parallel with the first page
         out, after = {}, None
         for _ in range(20):
             params = {"limit": 100, "properties": COMPANY_PROPS, **({"after": after} if after else {})}
@@ -301,9 +320,8 @@ def _hydrate(objs: list[dict]) -> list[dict]:
     if not objs:
         return []
     ids = [int(o["id"]) for o in objs]
-    to_company = _assoc("deals", "companies", ids)
-    to_contact = _assoc("deals", "contacts", ids)
-    known = _companies()
+    to_company, to_contact, known, _ = _parallel((_assoc, "deals", "companies", ids),
+                                                 (_assoc, "deals", "contacts", ids), (_companies,), (_stages,))
     missing = {c for cs in to_company.values() for c in cs if c not in known}
     extra = {int(o["id"]): _company(o) for o in _batch_read("companies", list(missing), COMPANY_PROPS)} if missing else {}
     out = []
@@ -459,14 +477,15 @@ def recent_activities(company_id: int, limit: int = 10) -> list[dict]:
     deal_ids = _assoc("companies", "deals", [company_id]).get(company_id, [])
     if not deal_ids:
         return []
+    kinds = list(ACTIVITY_OBJECTS.items())
+    links = _parallel(*[(_assoc, "deals", obj_type, deal_ids) for _, obj_type in kinds])
+    owners = [{a: d for d, actions in link.items() for a in actions} for link in links]
+    reads = _parallel(*[(_batch_read, obj_type, list(owner_of), ["hs_timestamp", ACTIVITY_TEXT[obj_type], "hubspot_owner_id"])
+                        for (_, obj_type), owner_of in zip(kinds, owners)])
     acts = []
-    for kind, obj_type in ACTIVITY_OBJECTS.items():
-        links = _assoc("deals", obj_type, deal_ids)
-        owner_of = {a: d for d, actions in links.items() for a in actions}
-        if not owner_of:
-            continue
+    for (kind, obj_type), owner_of, objs in zip(kinds, owners, reads):
         text_prop = ACTIVITY_TEXT[obj_type]
-        for obj in _batch_read(obj_type, list(owner_of), ["hs_timestamp", text_prop, "hubspot_owner_id"]):
+        for obj in objs:
             p = obj["properties"]
             owner_id = p.get("hubspot_owner_id")
             acts.append({

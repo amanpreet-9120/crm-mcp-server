@@ -30,9 +30,10 @@ def main() -> None:
     hubspot._token()
     hubspot_seed.ensure_properties()
 
-    existing = hubspot_seed.existing_demo_ids("deals")
-    if existing and not args.reset:
-        sys.exit(f"{len(existing)} demo deals already exist. Run with --reset to replace them.")
+    existing = {t: len(hubspot_seed.existing_demo_ids(t)) for t in ("companies", "contacts", "deals")}
+    if any(existing.values()) and not args.reset:
+        found = ", ".join(f"{n} {t}" for t, n in existing.items() if n)
+        sys.exit(f"Demo records already exist ({found}). Run with --reset to replace them.")
     if args.reset:
         print("Archiving previous demo records...")
         hubspot_seed.remove_demo_records()
