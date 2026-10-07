@@ -259,7 +259,8 @@ def get_pipeline_summary(owner: str | None = None) -> dict[str, Any]:
     """
     resolved = _resolve_owner(owner)
     deals = store.find_deals(owner=resolved)
-    return {"owner": resolved or "all", "as_of": db.today().isoformat(), **logic.pipeline_summary(deals)}
+    probabilities = store.stage_probabilities() if hasattr(store, "stage_probabilities") else None
+    return {"owner": resolved or "all", "as_of": db.today().isoformat(), **logic.pipeline_summary(deals, probabilities)}
 
 
 @mcp.tool(annotations=READ)
@@ -372,12 +373,17 @@ def update_deal(
     if not confirm:
         new_stage = changes.get("stage", deal["stage"])
         new_value = changes.get("value", deal["value"])
+        old_prob = deal.get("probability")
+        new_prob = old_prob
+        if "stage" in changes:
+            new_prob = store.probability_for(new_stage, deal.get("pipeline")) if hasattr(store, "probability_for") else None
         return {
             "status": "preview",
             "deal_id": deal_id,
             "company": deal["company"],
             "changes": diff,
-            "forecast_impact": logic.weighted(new_value, new_stage) - logic.weighted(deal["value"], deal["stage"]),
+            "forecast_impact": (logic.weighted(new_value, new_stage, new_prob)
+                                - logic.weighted(deal["value"], deal["stage"], old_prob)),
             "next": "Show this to the user. If they approve, call update_deal again with the same arguments and confirm=true.",
         }
     closing = {"next_step": None, "next_step_date": None} if changes.get("stage") in ("won", "lost") else {}
@@ -393,10 +399,12 @@ def update_deal(
 def playbook() -> str:
     """The exact rules the attention and forecast tools apply."""
     stale = "\n".join(f"- {s}: {d} days" for s, d in logic.STALE_AFTER_DAYS.items())
-    prob = "\n".join(f"- {s}: {int(p * 100)}%" for s, p in logic.STAGE_PROBABILITY.items())
+    probabilities = store.stage_probabilities() if hasattr(store, "stage_probabilities") else logic.STAGE_PROBABILITY
+    source = f" (from the {BACKEND} pipeline settings)" if probabilities is not logic.STAGE_PROBABILITY else ""
+    prob = "\n".join(f"- {s}: {round(p * 100)}%" for s, p in probabilities.items())
     return (
         "# Sales playbook\n\n## Stale after (no activity)\n" + stale +
-        "\n\n## Forecast probability by stage\n" + prob +
+        f"\n\n## Forecast probability by stage{source}\n" + prob +
         f"\n\n## High value\nDeals >= ${logic.HIGH_VALUE:,} get extra priority when flagged.\n"
         "\n## Hygiene\nEvery open deal needs a next step with a date, and a close date in the future.\n"
     )

@@ -63,8 +63,20 @@ READS = [
 ]
 
 
+# Forecast figures use HubSpot's own stage probabilities, so they differ by design (tested below).
+PROBABILITY_FIELDS = {"weighted_value", "weighted_forecast", "stage_probabilities", "forecast_impact"}
+
+
+def without_probabilities(value):
+    if isinstance(value, dict):
+        return {k: without_probabilities(v) for k, v in value.items() if k not in PROBABILITY_FIELDS}
+    if isinstance(value, list):
+        return [without_probabilities(v) for v in value]
+    return value
+
+
 def test_reads_match_sqlite(fake):
-    assert run(hubspot, READS) == run(db, READS)
+    assert without_probabilities(run(hubspot, READS)) == without_probabilities(run(db, READS))
 
 
 def test_get_account_matches_sqlite(fake):
@@ -94,7 +106,7 @@ def test_write_flow_matches_sqlite(fake):
     got = run(hubspot, calls)
     for w, g in zip(want, got):
         w.pop("activity_id", None), g.pop("activity_id", None)
-    assert got == want
+    assert without_probabilities(got) == without_probabilities(want)
     deal = fake.objects["deals"][1]
     assert deal["dealstage"] == "closedwon" and "hs_next_step" not in deal
 
@@ -167,3 +179,29 @@ def test_backend_errors_reach_the_model(fake, monkeypatch):
     hubspot.clear_caches()
     r = run(hubspot, [("get_pipeline_summary", {})])[0]
     assert "could not be reached" in r["_error"] and "401" in r["_error"]
+
+
+def test_forecast_uses_hubspot_stage_probabilities(fake):
+    """Weighted numbers must match what HubSpot shows: amount x the stage's probability."""
+    probability = {st["id"]: float(st["metadata"]["probability"]) for st in __import__("fake_hubspot").PIPELINE["stages"]}
+    open_deals = [d for d in fake.objects["deals"].values() if d["dealstage"] not in ("closedwon", "closedlost")]
+    expected = sum(round(float(d["amount"]) * probability[d["dealstage"]]) for d in open_deals)
+    summary = run(hubspot, [("get_pipeline_summary", {})])[0]
+    assert summary["weighted_forecast"] == expected
+    assert summary["stage_probabilities"]["Appointment Scheduled"] == 0.2
+    sqlite = run(db, [("get_pipeline_summary", {})])[0]
+    assert sqlite["stage_probabilities"]["lead"] == 0.1          # SQLite keeps the playbook defaults
+
+
+def test_preview_impact_uses_hubspot_probabilities(fake):
+    preview = run(hubspot, [("update_deal", {"deal_id": 1, "stage": "won"})])[0]   # Contract Sent 90% -> Won 100%
+    assert preview["forecast_impact"] == round(48000 * 1.0) - round(48000 * 0.9)
+
+
+def test_playbook_shows_backend_probabilities(fake):
+    server.store = hubspot
+    try:
+        text = server.playbook()
+    finally:
+        server.store = db
+    assert "Contract Sent: 90%" in text and "pipeline settings" in text

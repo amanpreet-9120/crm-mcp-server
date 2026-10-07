@@ -265,6 +265,7 @@ def _deal(obj: dict, company: dict | None, contact_id: int | None) -> dict:
         "next_step_date": _day(p.get(NEXT_STEP_DATE_PROP)),
         "company": company["name"] if company else "(no company)",
         "pipeline": p.get("pipeline"),
+        "probability": _stages().get(p.get("dealstage") or "", {}).get("probability"),
     }
 
 
@@ -342,6 +343,18 @@ def _remember(deal_id: int) -> dict | None:
 
 
 # --------------------------------------------------------------------------- data access (same API as db.py)
+
+
+def stage_probabilities() -> dict[str, float]:
+    """Win probability per HubSpot stage, as configured in the account's pipelines."""
+    multi = len({s["pipeline"] for s in _stages().values()}) > 1
+    return {(f"{s['label']} ({s['pipeline']})" if multi else s["label"]): s["probability"]
+            for s in _stages().values()}
+
+
+def probability_for(stage: str, pipeline: str | None) -> float:
+    """Probability of the HubSpot stage a deal would move to for our stage name (see update_deal)."""
+    return _stages()[_stage_id(stage, pipeline)]["probability"]
 
 
 def list_owners() -> list[str]:

@@ -34,8 +34,10 @@ def days_between(earlier: str | date, later: date) -> int:
     return (later - earlier).days
 
 
-def weighted(value: int, stage: str) -> int:
-    return round(value * STAGE_PROBABILITY[stage])
+def weighted(value: int, stage: str, probability: float | None = None) -> int:
+    """Value x win probability. A backend may supply the probability (HubSpot: from the deal's
+    pipeline stage); otherwise the playbook default for the stage is used."""
+    return round(value * (STAGE_PROBABILITY[stage] if probability is None else probability))
 
 
 @dataclass
@@ -85,13 +87,13 @@ def assess_deal(deal: dict, today: date) -> Attention:
     return Attention(reasons, priority, score)
 
 
-def pipeline_summary(deals: list[dict]) -> dict:
+def pipeline_summary(deals: list[dict], probabilities: dict[str, float] | None = None) -> dict:
     by_stage = {s: {"count": 0, "value": 0, "weighted_value": 0} for s in STAGES}
     for d in deals:
         row = by_stage[d["stage"]]
         row["count"] += 1
         row["value"] += d["value"]
-        row["weighted_value"] += weighted(d["value"], d["stage"])
+        row["weighted_value"] += weighted(d["value"], d["stage"], d.get("probability"))
     open_rows = [by_stage[s] for s in OPEN_STAGES]
     won, lost = by_stage["won"]["count"], by_stage["lost"]["count"]
     return {
@@ -101,7 +103,7 @@ def pipeline_summary(deals: list[dict]) -> dict:
         "weighted_forecast": sum(r["weighted_value"] for r in open_rows),
         "won_value": by_stage["won"]["value"],
         "win_rate": round(won / (won + lost), 2) if (won + lost) else None,
-        "stage_probabilities": STAGE_PROBABILITY,
+        "stage_probabilities": probabilities or STAGE_PROBABILITY,
     }
 
 

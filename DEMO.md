@@ -25,7 +25,7 @@ Then ask again: *"Does Acme still need attention?"* It's gone from the list.
 **5. Safety (20s)**
 > Mark the Acme deal as won.
 
-Claude shows a **preview** (stage change, +$12k forecast impact) and asks you to confirm. Say yes. *Point out: the model can't change data without the user seeing the diff.*
+Claude shows a **preview** (stage change, forecast impact: +$12k on the SQLite demo, +$4.8k on HubSpot, which uses its own stage probabilities) and asks you to confirm. Say yes. *Point out: the model can't change data without the user seeing the diff.*
 
 **6. Under the hood (optional, 15s)**
 Open `http://localhost:8000/stats` (HTTP mode) or `logs/tool_calls.jsonl`. Every call, its latency and its token size.
