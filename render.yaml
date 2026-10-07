@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: crm-mcp-server
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: CRM_READ_ONLY
+        value: "0"
+      - key: CRM_MCP_TOKEN
+        generateValue: true   # Render creates a random token; copy it from the dashboard

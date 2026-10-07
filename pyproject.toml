@@ -1,0 +1,26 @@
+[project]
+name = "crm-mcp-server"
+version = "1.0.0"
+description = "An MCP server that lets Claude work a B2B sales pipeline: find risks, summarise the pipeline, draft follow-ups, and log activity safely."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.3,<3",
+    "uvicorn>=0.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+crm-mcp = "crm_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
