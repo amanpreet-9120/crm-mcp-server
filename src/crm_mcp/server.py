@@ -453,6 +453,13 @@ def weekly_pipeline_review(owner: str = "") -> str:
 # --------------------------------------------------------------------------- HTTP extras
 
 
+@mcp.custom_route("/", methods=["GET"], include_in_schema=False)
+async def landing(_request):
+    """Human-facing page: what this server is and how to connect Claude to it."""
+    from starlette.responses import HTMLResponse
+    return HTMLResponse((Path(__file__).parent / "landing.html").read_text())
+
+
 @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
 async def health(_request):
     from starlette.responses import JSONResponse

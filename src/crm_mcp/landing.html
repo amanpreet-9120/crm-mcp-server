@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales CRM MCP Server</title>
+<meta name="description" content="An MCP server that lets Claude work a B2B sales pipeline: find at-risk deals, summarise the pipeline, draft follow-ups, and log activity safely.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23176b55'/><path d='M8 22l5-6 4 3 7-9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+  :root {
+    --bg: #f7f6f2;
+    --surface: #ffffff;
+    --ink: #1b1d1c;
+    --muted: #5d625f;
+    --line: #e3e1da;
+    --accent: #176b55;
+    --accent-soft: #e4f1ec;
+    --warn: #8a5a00;
+    --warn-soft: #fbf0d9;
+    --code-bg: #f1efe9;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121413;
+      --surface: #1a1d1c;
+      --ink: #ecefed;
+      --muted: #9aa29e;
+      --line: #2b302e;
+      --accent: #4fc29c;
+      --accent-soft: #17302a;
+      --warn: #f0c060;
+      --warn-soft: #33290f;
+      --code-bg: #222624;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 56px 20px 72px; }
+  a { color: var(--accent); }
+  h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.15; letter-spacing: -0.02em; margin: 14px 0 14px; }
+  h2 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lede { font-size: 18px; color: var(--muted); max-width: 640px; margin: 0; }
+  .eyebrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  section { margin-top: 48px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .grid > * { min-width: 0; }
+  .step-title { font-weight: 650; margin: 0 0 6px; }
+  .step-note { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+  .copy-row {
+    display: flex; align-items: stretch; gap: 8px;
+    background: var(--code-bg); border-radius: 8px; padding: 4px 4px 4px 12px;
+  }
+  .copy-row code {
+    flex: 1; min-width: 0; font: 13.5px/1.5 var(--mono); padding: 6px 0;
+    overflow-x: auto; white-space: nowrap;
+  }
+  button.copy {
+    flex: none; font: 600 13px/1 inherit; font-family: inherit; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    border-radius: 6px; padding: 0 12px;
+  }
+  button.copy:hover { border-color: var(--accent); color: var(--accent); }
+  .ask { display: grid; gap: 8px; }
+  .ask button {
+    text-align: left; font: inherit; cursor: pointer; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; display: flex; justify-content: space-between; gap: 16px; align-items: baseline;
+  }
+  .ask button:hover { border-color: var(--accent); }
+  .ask .hint { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .ask button.done .hint { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td code { font: 13.5px var(--mono); }
+  .tag { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .tag.write { background: var(--warn-soft); color: var(--warn); }
+  .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .stat .num { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .stat .label { color: var(--muted); font-size: 14px; }
+  ul.points { margin: 0; padding-left: 20px; }
+  ul.points li { margin: 6px 0; }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  @media (max-width: 560px) {
+    main { padding: 36px 16px 56px; }
+    .ask button { flex-direction: column; gap: 2px; }
+    thead { display: none; }
+    tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+    tr:last-child { border-bottom: 0; }
+    td { padding: 0; border: 0; }
+    td:last-child { grid-column: 1 / -1; color: var(--muted); font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">
+      <span class="pill" id="status"><span class="dot"></span>Checking server…</span>
+      <span class="pill warn" id="mode" hidden>Read-only demo</span>
+    </div>
+    <h1>Claude, connected to your sales pipeline.</h1>
+    <p class="lede">This is a live <strong>MCP server</strong>. Connect it to Claude and ask in plain English: which deals are at risk, what the forecast looks like, or draft a follow-up from the real account history. Changes need your approval first.</p>
+  </header>
+
+  <section>
+    <h2>Connect in one step</h2>
+    <p class="sub">Use this server address with any MCP client. No sign-up or key needed.</p>
+    <div class="grid" style="grid-template-columns:1fr">
+      <div class="card">
+        <p class="step-title">Claude.ai or Claude Desktop</p>
+        <div class="copy-row"><code class="mcp-url">…/mcp</code><button class="copy" data-copy-from=".mcp-url">Copy</button></div>
+        <p class="step-note">Settings → Connectors → Add custom connector, then paste the URL.</p>
+      </div>
+      <div class="card">
+        <p class="step-title">Claude Code</p>
+        <div class="copy-row"><code id="cc-cmd">claude mcp add --transport http crm …/mcp</code><button class="copy" data-copy-from="#cc-cmd">Copy</button></div>
+        <p class="step-note">Run in your terminal, then start a new session.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Then ask Claude</h2>
+    <p class="sub">Click to copy. The data is a fictional company: 24 accounts, 44 deals, 3 sales reps.</p>
+    <div class="ask">
+      <button data-q="Which deals over $40k need attention this week, and why?"><span>Which deals over $40k need attention this week, and why?</span><span class="hint">ranked risks</span></button>
+      <button data-q="What's our weighted forecast, and how does Marcus compare to the team?"><span>What's our weighted forecast, and how does Marcus compare to the team?</span><span class="hint">exact numbers</span></button>
+      <button data-q="Draft a short follow-up email to the decision maker at Meridian Hotels."><span>Draft a short follow-up email to the decision maker at Meridian Hotels.</span><span class="hint">real context</span></button>
+      <button data-q="Pull up Meridan Hotel."><span>Pull up Meridan Hotel.</span><span class="hint">typo recovery</span></button>
+      <button data-q="Mark the Acme fleet tracking deal as won."><span>Mark the Acme fleet tracking deal as won.</span><span class="hint">safe writes</span></button>
+    </div>
+  </section>
+
+  <section>
+    <h2>What Claude can do here</h2>
+    <p class="sub">Six tools, each shaped around a question a salesperson actually asks.</p>
+    <div class="card table-wrap" style="padding:6px 8px">
+      <table>
+        <thead><tr><th>Tool</th><th></th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>get_deals_needing_attention</code></td><td><span class="tag">read</span></td><td>Ranked open deals with plain-English reasons: stale, overdue, no next step.</td></tr>
+          <tr><td><code>get_pipeline_summary</code></td><td><span class="tag">read</span></td><td>Totals by stage, weighted forecast and win rate, computed in code.</td></tr>
+          <tr><td><code>get_account</code></td><td><span class="tag">read</span></td><td>One company: contacts, deals and recent activity in a single call.</td></tr>
+          <tr><td><code>search_deals</code></td><td><span class="tag">read</span></td><td>Filter by owner, stage, value, inactivity or closing window.</td></tr>
+          <tr><td><code>log_activity</code></td><td><span class="tag write">write</span></td><td>Record a call, email or meeting and set the next step.</td></tr>
+          <tr><td><code>update_deal</code></td><td><span class="tag write">write</span></td><td>Change stage, value or close date. Shows a preview until you confirm.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="step-note" id="ro-note" hidden>Write tools are switched off on this public demo, so Claude will tell you instead of changing data.</p>
+  </section>
+
+  <section>
+    <h2>Built for production, not just a demo</h2>
+    <p class="sub">The design choices that carry over to a real deployment.</p>
+    <div class="card">
+      <ul class="points">
+        <li><strong>Exact numbers.</strong> Forecasts and risk rules run in code, so Claude never does arithmetic over your data.</li>
+        <li><strong>About 7× less context.</strong> Task-shaped tools return ranked answers instead of raw tables, which keeps responses fast and cheap.</li>
+        <li><strong>Safe writes.</strong> Changes show a preview with forecast impact and only apply after the user agrees.</li>
+        <li><strong>Self-correcting errors.</strong> A typo gets "Did you mean…?" so Claude recovers on its own.</li>
+        <li><strong>Observable.</strong> Every tool call is logged with latency and size. Live numbers below.</li>
+        <li><strong>Swappable data layer.</strong> One file talks to the database. Replace it with HubSpot, Salesforce, Pipedrive or Postgres.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Live usage</h2>
+    <p class="sub">Tool calls handled by this server since it last started. <a href="stats">Raw JSON</a></p>
+    <div class="stats">
+      <div class="card stat"><div class="num" id="s-calls">–</div><div class="label">tool calls</div></div>
+      <div class="card stat"><div class="num" id="s-ms">–</div><div class="label">avg response time</div></div>
+      <div class="card stat"><div class="num" id="s-tokens">–</div><div class="label">avg tokens per result</div></div>
+      <div class="card stat"><div class="num" id="s-errors">–</div><div class="label">errors</div></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Built by Amanpreet</span>
+    <a href="https://github.com/amanpreet-9120/crm-mcp-server">Source code &amp; design notes on GitHub</a>
+    <a href="health">Health check</a>
+  </footer>
+</main>
+
+<script>
+  const origin = window.location.origin;
+  const mcpUrl = origin + "/mcp";
+  document.querySelectorAll(".mcp-url").forEach(el => el.textContent = mcpUrl);
+  document.getElementById("cc-cmd").textContent = "claude mcp add --transport http crm " + mcpUrl;
+
+  async function copyText(text, btn, doneLabel) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (_) {}
+      ta.remove();
+    }
+    const target = btn.querySelector(".hint") || btn;
+    const before = target.textContent;
+    target.textContent = doneLabel;
+    btn.classList.add("done");
+    setTimeout(() => { target.textContent = before; btn.classList.remove("done"); }, 1400);
+  }
+
+  document.querySelectorAll("button.copy").forEach(btn => {
+    btn.addEventListener("click", () => copyText(document.querySelector(btn.dataset.copyFrom).textContent, btn, "Copied"));
+  });
+  document.querySelectorAll(".ask button").forEach(btn => {
+    btn.addEventListener("click", () => copyText(btn.dataset.q, btn, "copied ✓"));
+  });
+
+  async function loadHealth() {
+    const status = document.getElementById("status");
+    try {
+      const h = await fetch("health", { cache: "no-store" }).then(r => r.json());
+      status.lastChild.textContent = h.status === "ok" ? "Server online" : "Server degraded";
+      if (h.read_only) {
+        document.getElementById("mode").hidden = false;
+        document.getElementById("ro-note").hidden = false;
+      }
+    } catch (e) {
+      status.classList.add("warn");
+      status.lastChild.textContent = "Server unreachable";
+    }
+  }
+
+  async function loadStats() {
+    try {
+      const s = await fetch("stats", { cache: "no-store" }).then(r => r.json());
+      const tools = Object.values(s.tools || {});
+      const calls = tools.reduce((n, t) => n + t.calls, 0);
+      const errors = tools.reduce((n, t) => n + t.errors, 0);
+      const avg = key => calls ? tools.reduce((n, t) => n + t[key] * t.calls, 0) / calls : null;
+      const ms = avg("avg_ms"), tokens = avg("avg_est_tokens");
+      document.getElementById("s-calls").textContent = calls.toLocaleString();
+      document.getElementById("s-errors").textContent = errors.toLocaleString();
+      document.getElementById("s-ms").textContent = ms === null ? "–" : (ms < 10 ? ms.toFixed(1) : Math.round(ms)) + " ms";
+      document.getElementById("s-tokens").textContent = tokens === null ? "–" : Math.round(tokens).toLocaleString();
+    } catch (e) { /* leave placeholders */ }
+  }
+
+  loadHealth();
+  loadStats();
+  setInterval(loadStats, 15000);
+</script>
+</body>
+</html>

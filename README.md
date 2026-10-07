@@ -32,7 +32,7 @@ See **[DEMO.md](DEMO.md)** for a 2-minute demo script.
 | `log_activity` | write | Adds a call/email/meeting/note, updates last activity, sets the next step. |
 | `update_deal` | write | Change stage/value/close date. **Returns a preview unless `confirm=true`.** |
 
-Also: resource `crm://playbook` (the exact rules), prompt `weekly_pipeline_review`, and HTTP routes `/health` and `/stats` (per-tool calls, errors, latency, output tokens).
+Also: resource `crm://playbook` (the exact rules), prompt `weekly_pipeline_review`, and HTTP routes `/` (landing page with connect instructions and live usage), `/health` and `/stats` (per-tool calls, errors, latency, output tokens).
 
 ---
 
@@ -105,6 +105,7 @@ claude mcp add --transport http crm https://YOUR-APP.onrender.com/mcp
 ```
 src/crm_mcp/
   server.py   MCP tools, resource, prompt, logging, auth, HTTP app
+  landing.html  page served at / for people who open the URL in a browser
   logic.py    business rules: staleness, priority, forecast (plain Python, unit-tested)
   db.py       SQLite schema + deterministic demo data
 tests/        tests that go through a real MCP client

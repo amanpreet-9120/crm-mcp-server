@@ -146,3 +146,10 @@ def test_calls_are_logged():
     lines = server.LOG_PATH.read_text().strip().splitlines()
     entry = json.loads(lines[-1])
     assert entry["tool"] == "get_pipeline_summary" and entry["ok"] and entry["est_tokens"] > 0
+
+
+def test_landing_page_is_served():
+    from starlette.testclient import TestClient
+    r = TestClient(server.build_http_app()).get("/")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert "Connect in one step" in r.text
