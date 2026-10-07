@@ -153,3 +153,11 @@ def test_landing_page_is_served():
     r = TestClient(server.build_http_app()).get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     assert "Connect in one step" in r.text
+
+
+def test_server_has_no_sql():
+    # db.py is the only module that talks to the database (see DESIGN.md §6).
+    import re
+    from pathlib import Path
+    src = Path(server.__file__).read_text()
+    assert not re.search(r"\b(SELECT|INSERT|UPDATE|DELETE)\s", src), "move queries into db.py"

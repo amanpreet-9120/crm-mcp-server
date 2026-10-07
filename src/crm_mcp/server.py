@@ -18,7 +18,7 @@ import os
 import sys
 import time
 from collections import defaultdict, deque
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -100,35 +100,27 @@ def observed(fn):
 
 # --------------------------------------------------------------------------- helpers
 
-def _all(conn, sql: str, params: tuple = ()) -> list[dict]:
-    return [dict(r) for r in conn.execute(sql, params).fetchall()]
-
-
-def _owners(conn) -> list[str]:
-    return [r["owner"] for r in conn.execute("SELECT DISTINCT owner FROM deals ORDER BY owner")]
-
-
-def _resolve_owner(conn, owner: str | None) -> str | None:
+def _resolve_owner(owner: str | None) -> str | None:
     if not owner:
         return None
-    owners = _owners(conn)
+    owners = db.list_owners()
     matches = [o for o in owners if owner.lower() in o.lower()]
     if len(matches) == 1:
         return matches[0]
     raise ToolError(f"Owner '{owner}' is {'ambiguous' if matches else 'unknown'}. Valid owners: {', '.join(owners)}.")
 
 
-def _resolve_company(conn, company: str) -> dict:
+def _resolve_company(company: str) -> dict:
     if company.strip().isdigit():
-        row = conn.execute("SELECT * FROM companies WHERE id=?", (int(company),)).fetchone()
+        row = db.get_company(int(company))
         if row:
-            return dict(row)
-    names = [r["name"] for r in conn.execute("SELECT name FROM companies")]
+            return row
+    names = db.list_company_names()
     exact = [n for n in names if n.lower() == company.lower()]
     partial = [n for n in names if company.lower() in n.lower()]
     pick = exact or (partial if len(partial) == 1 else [])
     if pick:
-        return dict(conn.execute("SELECT * FROM companies WHERE name=?", (pick[0],)).fetchone())
+        return db.get_company_by_name(pick[0])
     hint = logic.suggest(company, names)
     raise ToolError(
         f"No single company matches '{company}'."
@@ -136,13 +128,11 @@ def _resolve_company(conn, company: str) -> dict:
     )
 
 
-def _get_deal(conn, deal_id: int) -> dict:
-    row = conn.execute(
-        "SELECT d.*, c.name AS company FROM deals d JOIN companies c ON c.id=d.company_id WHERE d.id=?", (deal_id,)
-    ).fetchone()
-    if not row:
+def _get_deal(deal_id: int) -> dict:
+    deal = db.get_deal(deal_id)
+    if not deal:
         raise ToolError(f"Deal {deal_id} does not exist. Find valid ids with search_deals or get_account.")
-    return dict(row)
+    return deal
 
 
 def _compact(deal: dict, today: date) -> dict:
@@ -199,31 +189,16 @@ def search_deals(
     """
     today = db.today()
     limit = max(1, min(limit, 50))
-    where, params = ["1=1"], []
-    with db.connect() as conn:
-        if company:
-            where.append("c.name LIKE ?")
-            params.append(f"%{company}%")
-        if stage:
-            where.append("d.stage = ?")
-            params.append(stage)
-        elif not include_closed:
-            where.append("d.stage NOT IN ('won','lost')")
-        if owner:
-            where.append("d.owner = ?")
-            params.append(_resolve_owner(conn, owner))
-        if min_value is not None:
-            where.append("d.value >= ?")
-            params.append(min_value)
-        if inactive_days is not None:
-            where.append("julianday(?) - julianday(d.last_activity_at) >= ?")
-            params += [today.isoformat(), inactive_days]
-        if closing_within_days is not None:
-            where.append("d.close_date BETWEEN ? AND date(?, ?)")
-            params += [today.isoformat(), today.isoformat(), f"+{closing_within_days} days"]
-        order = {"value": "d.value DESC", "last_activity": "d.last_activity_at ASC", "close_date": "d.close_date ASC"}[sort_by]
-        rows = _all(conn, f"SELECT d.*, c.name AS company FROM deals d JOIN companies c ON c.id=d.company_id "
-                          f"WHERE {' AND '.join(where)} ORDER BY {order}", tuple(params))
+    rows = db.find_deals(
+        company=company,
+        stages=[stage] if stage else None,
+        exclude_stages=None if stage or include_closed else ["won", "lost"],
+        owner=_resolve_owner(owner),
+        min_value=min_value,
+        inactive_since=today - timedelta(days=inactive_days) if inactive_days is not None else None,
+        close_between=(today, today + timedelta(days=closing_within_days)) if closing_within_days is not None else None,
+        sort_by=sort_by,
+    )
     out: dict[str, Any] = {"total_matches": len(rows), "returned": min(len(rows), limit),
                            "deals": [_compact(r, today) for r in rows[:limit]]}
     if len(rows) > limit:
@@ -241,17 +216,10 @@ def get_account(company: str) -> dict[str, Any]:
     company: name (partial is fine if unique) or numeric company id. Use this before drafting any email or call plan.
     """
     today = db.today()
-    with db.connect() as conn:
-        co = _resolve_company(conn, company)
-        contacts = _all(conn, "SELECT id AS contact_id, name, title, email, is_decision_maker FROM contacts "
-                              "WHERE company_id=? ORDER BY is_decision_maker DESC", (co["id"],))
-        deals = _all(conn, "SELECT d.*, ? AS company FROM deals d WHERE company_id=? ORDER BY value DESC",
-                     (co["name"], co["id"]))
-        acts = _all(conn, "SELECT a.deal_id, a.type, a.summary, a.created_at AS date, a.created_by AS by "
-                          "FROM activities a JOIN deals d ON d.id=a.deal_id WHERE d.company_id=? "
-                          "ORDER BY a.created_at DESC, a.id DESC LIMIT 10", (co["id"],))
-    for c in contacts:
-        c["is_decision_maker"] = bool(c["is_decision_maker"])
+    co = _resolve_company(company)
+    contacts = db.list_contacts(co["id"])
+    deals = db.find_deals(company_id=co["id"], sort_by="value")
+    acts = db.recent_activities(co["id"], limit=10)
     deal_rows = []
     for d in deals:
         row = _compact(d, today)
@@ -270,12 +238,8 @@ def get_pipeline_summary(owner: str | None = None) -> dict[str, Any]:
 
     owner: optional rep name to scope to one person. Use this for any totals - do not sum deals yourself.
     """
-    with db.connect() as conn:
-        resolved = _resolve_owner(conn, owner)
-        sql, params = "SELECT stage, value FROM deals", ()
-        if resolved:
-            sql, params = sql + " WHERE owner=?", (resolved,)
-        deals = _all(conn, sql, params)
+    resolved = _resolve_owner(owner)
+    deals = db.find_deals(owner=resolved)
     return {"owner": resolved or "all", "as_of": db.today().isoformat(), **logic.pipeline_summary(deals)}
 
 
@@ -289,15 +253,7 @@ def get_deals_needing_attention(owner: str | None = None, min_value: int = 0, li
     """
     today = db.today()
     limit = max(1, min(limit, 50))
-    with db.connect() as conn:
-        resolved = _resolve_owner(conn, owner)
-        sql = ("SELECT d.*, c.name AS company FROM deals d JOIN companies c ON c.id=d.company_id "
-               "WHERE d.stage NOT IN ('won','lost') AND d.value >= ?")
-        params: tuple = (min_value,)
-        if resolved:
-            sql += " AND d.owner=?"
-            params += (resolved,)
-        deals = _all(conn, sql, params)
+    deals = db.find_deals(exclude_stages=["won", "lost"], min_value=min_value, owner=_resolve_owner(owner))
     flagged = []
     for d in deals:
         att = logic.assess_deal(d, today)
@@ -344,20 +300,13 @@ def log_activity(
             raise ToolError(f"next_step_date {nsd} is in the past. Use {today.isoformat()} or later.")
         if not next_step:
             raise ToolError("next_step_date was given without next_step. Say what the next step is.")
-    with db.connect() as conn:
-        deal = _get_deal(conn, deal_id)
-        if deal["stage"] in ("won", "lost") and next_step:
-            raise ToolError(f"Deal {deal_id} is {deal['stage']}; it can't have a next step. Log the activity without one.")
-        cur = conn.execute(
-            "INSERT INTO activities (deal_id, type, summary, created_at, created_by) VALUES (?,?,?,?,?)",
-            (deal_id, type, summary, today.isoformat(), logged_by),
-        )
-        conn.execute("UPDATE deals SET last_activity_at=? WHERE id=?", (today.isoformat(), deal_id))
-        if next_step:
-            conn.execute("UPDATE deals SET next_step=?, next_step_date=? WHERE id=?",
-                         (next_step, next_step_date, deal_id))
-        updated = _get_deal(conn, deal_id)
-    return {"activity_id": cur.lastrowid, "deal": _compact(updated, today),
+    deal = _get_deal(deal_id)
+    if deal["stage"] in ("won", "lost") and next_step:
+        raise ToolError(f"Deal {deal_id} is {deal['stage']}; it can't have a next step. Log the activity without one.")
+    activity_id = db.add_activity(deal_id, type, summary, on=today, by=logged_by,
+                                  next_step=next_step, next_step_date=next_step_date)
+    updated = _get_deal(deal_id)
+    return {"activity_id": activity_id, "deal": _compact(updated, today),
             "remaining_issues": logic.assess_deal(updated, today).reasons}
 
 
@@ -381,43 +330,40 @@ def update_deal(
         raise ToolError("Nothing to change. Pass at least one of stage, value, close_date.")
     if value is not None and value <= 0:
         raise ToolError("value must be a positive whole-dollar amount.")
-    with db.connect() as conn:
-        deal = _get_deal(conn, deal_id)
-        changes: dict[str, Any] = {}
-        if stage and stage != deal["stage"]:
-            if deal["stage"] in ("won", "lost"):
-                raise ToolError(f"Deal {deal_id} is already {deal['stage']} and closed. Create a new deal instead of reopening.")
-            changes["stage"] = stage
-        if value is not None and value != deal["value"]:
-            changes["value"] = value
-        if close_date:
-            cd = _parse_date(close_date, "close_date")
-            if cd < today and (stage or deal["stage"]) not in ("won", "lost"):
-                raise ToolError(f"close_date {cd} is in the past for an open deal. Pick {today.isoformat()} or later.")
-            if cd.isoformat() != deal["close_date"]:
-                changes["close_date"] = cd.isoformat()
-        if changes.get("stage") in ("won", "lost") and "close_date" not in changes:
-            changes["close_date"] = today.isoformat()
-        if not changes:
-            return {"deal_id": deal_id, "status": "no_change", "message": "Deal already has these values."}
+    deal = _get_deal(deal_id)
+    changes: dict[str, Any] = {}
+    if stage and stage != deal["stage"]:
+        if deal["stage"] in ("won", "lost"):
+            raise ToolError(f"Deal {deal_id} is already {deal['stage']} and closed. Create a new deal instead of reopening.")
+        changes["stage"] = stage
+    if value is not None and value != deal["value"]:
+        changes["value"] = value
+    if close_date:
+        cd = _parse_date(close_date, "close_date")
+        if cd < today and (stage or deal["stage"]) not in ("won", "lost"):
+            raise ToolError(f"close_date {cd} is in the past for an open deal. Pick {today.isoformat()} or later.")
+        if cd.isoformat() != deal["close_date"]:
+            changes["close_date"] = cd.isoformat()
+    if changes.get("stage") in ("won", "lost") and "close_date" not in changes:
+        changes["close_date"] = today.isoformat()
+    if not changes:
+        return {"deal_id": deal_id, "status": "no_change", "message": "Deal already has these values."}
 
-        diff = {k: {"from": deal[k], "to": v} for k, v in changes.items()}
-        if not confirm:
-            new_stage = changes.get("stage", deal["stage"])
-            new_value = changes.get("value", deal["value"])
-            return {
-                "status": "preview",
-                "deal_id": deal_id,
-                "company": deal["company"],
-                "changes": diff,
-                "forecast_impact": logic.weighted(new_value, new_stage) - logic.weighted(deal["value"], deal["stage"]),
-                "next": "Show this to the user. If they approve, call update_deal again with the same arguments and confirm=true.",
-            }
-        sets = ", ".join(f"{k}=?" for k in changes)
-        conn.execute(f"UPDATE deals SET {sets} WHERE id=?", (*changes.values(), deal_id))
-        if changes.get("stage") in ("won", "lost"):
-            conn.execute("UPDATE deals SET next_step=NULL, next_step_date=NULL WHERE id=?", (deal_id,))
-        updated = _get_deal(conn, deal_id)
+    diff = {k: {"from": deal[k], "to": v} for k, v in changes.items()}
+    if not confirm:
+        new_stage = changes.get("stage", deal["stage"])
+        new_value = changes.get("value", deal["value"])
+        return {
+            "status": "preview",
+            "deal_id": deal_id,
+            "company": deal["company"],
+            "changes": diff,
+            "forecast_impact": logic.weighted(new_value, new_stage) - logic.weighted(deal["value"], deal["stage"]),
+            "next": "Show this to the user. If they approve, call update_deal again with the same arguments and confirm=true.",
+        }
+    closing = {"next_step": None, "next_step_date": None} if changes.get("stage") in ("won", "lost") else {}
+    db.update_deal(deal_id, {**changes, **closing})
+    updated = _get_deal(deal_id)
     return {"status": "updated", "changes": diff, "deal": _compact(updated, today)}
 
 

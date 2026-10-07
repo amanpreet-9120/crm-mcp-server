@@ -107,7 +107,7 @@ src/crm_mcp/
   server.py   MCP tools, resource, prompt, logging, auth, HTTP app
   landing.html  page served at / for people who open the URL in a browser
   logic.py    business rules: staleness, priority, forecast (plain Python, unit-tested)
-  db.py       SQLite schema + deterministic demo data
+  db.py       the only module that touches the database: data access functions, schema, demo seed
 tests/        tests that go through a real MCP client
 scripts/      HTTP smoke test
 DESIGN.md     why it's built this way
@@ -116,4 +116,4 @@ DEMO.md       demo script
 
 ## Adapting it for a client
 
-Swap `db.py` for their real system (HubSpot, Pipedrive, Salesforce, Postgres). Keep the tool shapes, and change the thresholds in `logic.py` to match their sales process. The design notes in [DESIGN.md](DESIGN.md) are the part that carries over.
+Swap `db.py` for their real system (HubSpot, Pipedrive, Salesforce, Postgres). All data access goes through about ten plain functions there (`find_deals`, `get_deal`, `add_activity`, `update_deal`…), and `server.py` contains no SQL, so the tools, validation and error messages carry over unchanged. Keep those function signatures, and change the thresholds in `logic.py` to match their sales process. The design notes in [DESIGN.md](DESIGN.md) are the part that carries over.

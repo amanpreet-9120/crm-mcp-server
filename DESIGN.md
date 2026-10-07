@@ -58,7 +58,11 @@ Results do the same: truncated searches say *"22 more not shown. Narrow with own
 
 Nothing important is held in the model's context. Every call reads current state from SQLite, and every write is committed before returning. A new conversation, a crashed agent or a second user sees the same truth. The `crm://playbook` resource exposes the rules themselves, so the model can explain *why* a deal was flagged without guessing.
 
-## 6. Observability from day one
+## 6. One file talks to the database
+
+`server.py` has no SQL. Every read and write goes through plain functions in `db.py` (`find_deals`, `get_deal`, `list_contacts`, `add_activity`, `update_deal`…) that return dicts. Validation, business rules and the error text the model sees all live above that line, so connecting a real CRM means rewriting one module, not the tools. Multi-step writes (insert an activity, bump last-activity, set the next step) happen in a single transaction inside that module.
+
+## 7. Observability from day one
 
 Every tool call is logged (JSONL file + stderr) with arguments, success/error, latency and output size. `/stats` aggregates it per tool:
 
@@ -68,7 +72,7 @@ Every tool call is logged (JSONL file + stderr) with arguments, success/error, l
 
 This answers the questions that decide whether an agent survives in production: which tools does the model actually use, which ones error, and which ones bloat the context (and the bill).
 
-## 7. What I deliberately didn't build
+## 8. What I deliberately didn't build
 
 - **No multi-agent setup.** One model with six good tools handles every workflow here. Splitting into "analyst" and "writer" agents would add hand-offs to debug and double the context cost for no gain.
 - **No vector database.** The data is structured, so SQL filters beat semantic search.

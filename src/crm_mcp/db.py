@@ -1,4 +1,9 @@
-"""SQLite storage and deterministic demo data.
+"""SQLite storage: the only module that talks to the database.
+
+To connect a real CRM (HubSpot, Salesforce, Pipedrive, Postgres), replace this
+file and keep the functions under "data access" with the same signatures and
+return shapes. Deals are dicts with the `deals` columns plus `company` (the
+company name); dates are ISO strings. server.py and logic.py need no changes.
 
 The seed uses a fixed random seed and dates *relative to today*, so the demo
 always has the same shape (some stale deals, some overdue next steps) no matter
@@ -79,6 +84,147 @@ def connect(path: Path | str | None = None) -> Iterator[sqlite3.Connection]:
         raise
     finally:
         conn.close()
+
+
+# --------------------------------------------------------------------------- data access
+
+_DEAL = "SELECT d.*, c.name AS company FROM deals d JOIN companies c ON c.id=d.company_id"
+_SORT = {"value": "d.value DESC", "last_activity": "d.last_activity_at ASC", "close_date": "d.close_date ASC"}
+
+
+def _rows(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict]:
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def _one(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> dict | None:
+    row = conn.execute(sql, params).fetchone()
+    return dict(row) if row else None
+
+
+def list_owners() -> list[str]:
+    """Distinct deal owners (sales reps), sorted."""
+    with connect() as conn:
+        return [r["owner"] for r in conn.execute("SELECT DISTINCT owner FROM deals ORDER BY owner")]
+
+
+def list_company_names() -> list[str]:
+    with connect() as conn:
+        return [r["name"] for r in conn.execute("SELECT name FROM companies")]
+
+
+def get_company(company_id: int) -> dict | None:
+    with connect() as conn:
+        return _one(conn, "SELECT * FROM companies WHERE id=?", (company_id,))
+
+
+def get_company_by_name(name: str) -> dict | None:
+    with connect() as conn:
+        return _one(conn, "SELECT * FROM companies WHERE name=?", (name,))
+
+
+def get_deal(deal_id: int) -> dict | None:
+    with connect() as conn:
+        return _one(conn, _DEAL + " WHERE d.id=?", (deal_id,))
+
+
+def find_deals(
+    *,
+    company_id: int | None = None,
+    company: str | None = None,
+    stages: list[str] | None = None,
+    exclude_stages: list[str] | None = None,
+    owner: str | None = None,
+    min_value: int | None = None,
+    inactive_since: date | None = None,
+    close_between: tuple[date, date] | None = None,
+    sort_by: str | None = None,
+) -> list[dict]:
+    """Deals matching every given filter.
+
+    company_id: exact company. company: case-insensitive partial name. owner: exact name.
+    inactive_since: last activity on or before this date.
+    close_between: inclusive (start, end) close-date range.
+    sort_by: "value" (high first), "last_activity" (oldest first), "close_date" (soonest first).
+    """
+    where, params = ["1=1"], []
+    if company_id is not None:
+        where.append("d.company_id = ?")
+        params.append(company_id)
+    if company:
+        where.append("c.name LIKE ?")
+        params.append(f"%{company}%")
+    if stages:
+        where.append(f"d.stage IN ({','.join('?' * len(stages))})")
+        params += stages
+    if exclude_stages:
+        where.append(f"d.stage NOT IN ({','.join('?' * len(exclude_stages))})")
+        params += exclude_stages
+    if owner:
+        where.append("d.owner = ?")
+        params.append(owner)
+    if min_value is not None:
+        where.append("d.value >= ?")
+        params.append(min_value)
+    if inactive_since is not None:
+        where.append("d.last_activity_at <= ?")
+        params.append(inactive_since.isoformat())
+    if close_between is not None:
+        where.append("d.close_date BETWEEN ? AND ?")
+        params += [close_between[0].isoformat(), close_between[1].isoformat()]
+    sql = f"{_DEAL} WHERE {' AND '.join(where)}"
+    if sort_by:
+        sql += f" ORDER BY {_SORT[sort_by]}"
+    with connect() as conn:
+        return _rows(conn, sql, tuple(params))
+
+
+def list_contacts(company_id: int) -> list[dict]:
+    """Contacts at one company, decision makers first."""
+    with connect() as conn:
+        rows = _rows(conn, "SELECT id AS contact_id, name, title, email, is_decision_maker FROM contacts "
+                           "WHERE company_id=? ORDER BY is_decision_maker DESC", (company_id,))
+    for r in rows:
+        r["is_decision_maker"] = bool(r["is_decision_maker"])
+    return rows
+
+
+def recent_activities(company_id: int, limit: int = 10) -> list[dict]:
+    """Latest activities across all of a company's deals, newest first."""
+    with connect() as conn:
+        return _rows(conn, "SELECT a.deal_id, a.type, a.summary, a.created_at AS date, a.created_by AS by "
+                           "FROM activities a JOIN deals d ON d.id=a.deal_id WHERE d.company_id=? "
+                           "ORDER BY a.created_at DESC, a.id DESC LIMIT ?", (company_id, limit))
+
+
+def add_activity(deal_id: int, type: str, summary: str, on: date, by: str,
+                 next_step: str | None = None, next_step_date: str | None = None) -> int:
+    """Record an activity, bump the deal's last activity date and optionally set its next step.
+
+    All in one transaction. Returns the new activity id.
+    """
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO activities (deal_id, type, summary, created_at, created_by) VALUES (?,?,?,?,?)",
+            (deal_id, type, summary, on.isoformat(), by),
+        )
+        conn.execute("UPDATE deals SET last_activity_at=? WHERE id=?", (on.isoformat(), deal_id))
+        if next_step:
+            conn.execute("UPDATE deals SET next_step=?, next_step_date=? WHERE id=?",
+                         (next_step, next_step_date, deal_id))
+        return cur.lastrowid
+
+
+_UPDATABLE = {"stage", "value", "close_date", "next_step", "next_step_date"}
+
+
+def update_deal(deal_id: int, changes: dict) -> None:
+    """Set the given deal fields in one transaction. Keys must be deal columns in _UPDATABLE."""
+    bad = set(changes) - _UPDATABLE
+    if bad:
+        raise ValueError(f"not updatable: {sorted(bad)}")
+    with connect() as conn:
+        conn.execute(f"UPDATE deals SET {', '.join(f'{k}=?' for k in changes)} WHERE id=?",
+                     (*changes.values(), deal_id))
 
 
 # --------------------------------------------------------------------------- seed
