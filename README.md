@@ -80,7 +80,7 @@ python scripts/smoke_http.py http://localhost:8000/mcp     # end-to-end check
 
 ## Deploy (public link)
 
-The included `Dockerfile` runs anywhere that runs containers. With **Render**: push this folder to GitHub → New → Blueprint → pick the repo (it reads `render.yaml`). **Railway** and **Fly.io** also detect the Dockerfile directly.
+The included `Dockerfile` runs anywhere that runs containers. With **Render**: push this folder to GitHub → New → Blueprint → pick the repo (it reads `render.yaml`, which deploys an open, read-only demo). **Railway** and **Fly.io** also detect the Dockerfile directly.
 
 Then anyone can connect:
 

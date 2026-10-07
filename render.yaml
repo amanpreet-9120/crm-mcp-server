@@ -5,7 +5,7 @@ services:
     plan: free
     healthCheckPath: /health
     envVars:
+      # Public demo: open endpoint, writes disabled. Works with Claude.ai custom connectors.
+      # For a private deployment with writes, set CRM_READ_ONLY=0 and add CRM_MCP_TOKEN.
       - key: CRM_READ_ONLY
-        value: "0"
-      - key: CRM_MCP_TOKEN
-        generateValue: true   # Render creates a random token; copy it from the dashboard
+        value: "1"
