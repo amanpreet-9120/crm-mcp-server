@@ -4,9 +4,9 @@ An MCP server that lets Claude work a B2B sales pipeline. Ask in plain English, 
 
 It runs locally (stdio) for Claude Desktop / Claude Code, or as a hosted HTTP endpoint anyone can connect to with one command.
 
-**Data sources:** a built-in SQLite demo (default) or a live **HubSpot** account (`CRM_BACKEND=hubspot`). Same tools, same answers.
+**Data sources:** a built-in SQLite demo (default) or a live **HubSpot** account (`CRM_BACKEND=hubspot`), with the same six tools on both. The HubSpot backend is tested against a live HubSpot account as well as a fake HubSpot API in the test suite.
 
-> **Demo data:** 24 fictional companies, 42 contacts, 44 deals and ~130 activities, regenerated deterministically with dates relative to today, so the demo always has the same story whenever you run it.
+> **Demo data:** 24 fictional companies, 42 contacts, 44 deals and 126 activities, regenerated deterministically with dates relative to today, so the demo always has the same story whenever you run it.
 
 ---
 
@@ -46,7 +46,7 @@ Requires Python 3.10+. On macOS the system `python3` is often 3.9; use e.g. `pyt
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                       # 26 tests, ~1s
+pytest                       # 29 tests, ~1s, no network needed
 ```
 
 ### Connect to Claude Code (local)
@@ -97,6 +97,10 @@ claude mcp add --transport http crm https://YOUR-APP.onrender.com/mcp
 | `CRM_RESET_ON_START` | `0` (`1` in Docker) | Reseed demo data on every start. |
 | `CRM_DB_PATH` | `data/crm.db` | SQLite file location. |
 | `PORT` | `8000` | HTTP port (set automatically by most hosts). |
+| `CRM_BACKEND` | `sqlite` | `hubspot` to use a HubSpot account (see below). |
+| `HUBSPOT_SERVICE_KEY` | unset | HubSpot Service Key, required when `CRM_BACKEND=hubspot`. |
+
+Settings can also go in a `.env` file in the project folder (copy `.env.example`); real environment variables take precedence.
 
 > For a public client demo, either set a token and share it privately, or leave it open with `CRM_READ_ONLY=1`. Claude.ai custom connectors need either no auth or OAuth, so use the open read-only option there.
 
@@ -104,10 +108,22 @@ claude mcp add --transport http crm https://YOUR-APP.onrender.com/mcp
 
 ## Use it with HubSpot
 
-The same six tools run against a real HubSpot account. Deals, companies and contacts map to HubSpot objects, and activities are real HubSpot calls, emails, meetings and notes on the deal timeline.
+The same six tools run against a real HubSpot account. Deals, companies and contacts map to HubSpot objects, and activities are real HubSpot calls, emails, meetings and notes on the deal timeline. Against a live account, each question takes about 2 seconds: HubSpot calls take ~0.5 s each, so independent calls run in parallel.
 
-1. **Create a free HubSpot CRM account** (a normal account, not a developer account).
-2. **Create a Service Key:** Settings → Integrations → Service Keys. Give it read and write scopes for deals, companies and contacts (`crm.objects.deals.*`, `crm.objects.companies.*`, `crm.objects.contacts.*`), plus read and write schema scopes for the same three (`crm.schemas.deals.*`, `crm.schemas.companies.*`, `crm.schemas.contacts.*`) so the server can read stages and the loader can add its custom properties. If a scope is missing, the check script prints HubSpot's error naming it.
+1. **Create a free HubSpot CRM account** (a normal account, not a developer account). If you sign up inside an embedded browser, use email sign-up: Google blocks its sign-in there. Skip the optional tool connections, and keep the standard Sales Pipeline when the setup assistant offers to replace it.
+2. **Create a Service Key:** Development → Keys → Service Keys (also reachable from Settings → Integrations). Add these 13 scopes and nothing else:
+
+   | Scopes | Why |
+   |---|---|
+   | `crm.objects.deals.read`, `crm.objects.deals.write` | read deals, change stage / value / dates |
+   | `crm.objects.companies.read`, `crm.objects.companies.write` | accounts |
+   | `crm.objects.contacts.read`, `crm.objects.contacts.write` | contacts, plus calls, notes and meetings |
+   | `crm.schemas.deals.read`, `crm.schemas.deals.write` | pipeline stages, demo deal fields |
+   | `crm.schemas.companies.read`, `crm.schemas.companies.write` | demo id field on companies |
+   | `crm.schemas.contacts.read`, `crm.schemas.contacts.write` | demo id field on contacts |
+   | `sales-email-read` | the text of logged emails |
+
+   If a scope is missing, the check script prints HubSpot's error naming it.
 3. **Put the key in `.env`** (copy `.env.example`):
    ```
    CRM_BACKEND=hubspot
@@ -118,11 +134,12 @@ The same six tools run against a real HubSpot account. Deals, companies and cont
    python scripts/seed_hubspot.py          # --reset to replace earlier demo records
    python scripts/check_hubspot.py         # read-only check through a real MCP client
    ```
+   The check prints the open pipeline, the top flagged deals and one account. On the demo data the top three are Meridian Hotels, Acme Logistics and Northwind Freight.
 5. Restart Claude Code / Desktop. The `crm` server now reads and writes HubSpot.
 
-**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the demo (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). Forecasts use each stage's win probability from the HubSpot pipeline settings, so Claude's weighted numbers match HubSpot's own reports (the SQLite demo uses the playbook defaults in `logic.py`). For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
+**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the demo (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). Forecasts use each stage's win probability from the HubSpot pipeline settings, so Claude's weighted numbers match the weighted amounts on HubSpot's deal board. The SQLite demo uses the playbook defaults in `logic.py`, so forecast figures differ between the two backends by design; everything else is identical. For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
 
-**Good to know:** demo dates are relative to the day you load them, so run `seed_hubspot.py --reset` before a demo. HubSpot search takes a few seconds to index changes; the server overlays deals it just wrote so follow-up questions still see the update. `--reset` only archives records the loader created (to HubSpot's recycle bin).
+**Good to know:** the demo data uses `example.com` addresses, which never reach a real inbox. Demo dates are relative to the day you load them, so run `seed_hubspot.py --reset` before a demo. HubSpot search takes a few seconds to index changes; the server overlays deals it just wrote so follow-up questions still see the update. `--reset` only archives records the loader created (to HubSpot's recycle bin).
 
 ---
 
@@ -136,7 +153,8 @@ src/crm_mcp/
   db.py       SQLite backend: data access functions, schema, demo seed
   hubspot.py  HubSpot backend: the same functions over the HubSpot CRM API
   hubspot_seed.py  loads the demo dataset into a HubSpot account
-tests/        tests that go through a real MCP client, incl. a fake HubSpot API for backend parity
+tests/        tests that go through a real MCP client
+  fake_hubspot.py  in-memory HubSpot API; test_hubspot.py checks both backends answer alike
 scripts/      HTTP smoke test, HubSpot loader and check
 DESIGN.md     why it's built this way
 DEMO.md       demo script
