@@ -4,9 +4,9 @@ An MCP server that lets Claude work a B2B sales pipeline. Ask in plain English, 
 
 It runs locally (stdio) for Claude Desktop / Claude Code, or as a hosted HTTP endpoint anyone can connect to with one command.
 
-**Data sources:** a built-in SQLite demo (default) or a live **HubSpot** account (`CRM_BACKEND=hubspot`), with the same six tools on both. The HubSpot backend is tested against a live HubSpot account as well as a fake HubSpot API in the test suite.
+**Data sources:** a built-in SQLite sample CRM (default) or a live **HubSpot** account (`CRM_BACKEND=hubspot`), with the same six tools on both. The HubSpot backend is tested against a live HubSpot account as well as a fake HubSpot API in the test suite.
 
-> **Demo data:** 24 fictional companies, 42 contacts, 44 deals and 126 activities, regenerated deterministically with dates relative to today, so the demo always has the same story whenever you run it.
+> **Sample data:** 24 fictional companies, 42 contacts, 44 deals and 126 activities, regenerated deterministically with dates relative to today, so it always tells the same story whenever you run it.
 
 ---
 
@@ -94,7 +94,7 @@ claude mcp add --transport http crm https://YOUR-APP.onrender.com/mcp
 |---|---|---|
 | `CRM_MCP_TOKEN` | unset | If set, `/mcp` requires `Authorization: Bearer <token>`. Clients add `--header "Authorization: Bearer <token>"`. |
 | `CRM_READ_ONLY` | `0` | `1` disables both write tools (safe public demo). |
-| `CRM_RESET_ON_START` | `0` (`1` in Docker) | Reseed demo data on every start. |
+| `CRM_RESET_ON_START` | `0` (`1` in Docker) | Reseed the sample data on every start. |
 | `CRM_DB_PATH` | `data/crm.db` | SQLite file location. |
 | `PORT` | `8000` | HTTP port (set automatically by most hosts). |
 | `CRM_BACKEND` | `sqlite` | `hubspot` to use a HubSpot account (see below). |
@@ -118,9 +118,9 @@ The same six tools run against a real HubSpot account. Deals, companies and cont
    | `crm.objects.deals.read`, `crm.objects.deals.write` | read deals, change stage / value / dates |
    | `crm.objects.companies.read`, `crm.objects.companies.write` | accounts |
    | `crm.objects.contacts.read`, `crm.objects.contacts.write` | contacts, plus calls, notes and meetings |
-   | `crm.schemas.deals.read`, `crm.schemas.deals.write` | pipeline stages, demo deal fields |
-   | `crm.schemas.companies.read`, `crm.schemas.companies.write` | demo id field on companies |
-   | `crm.schemas.contacts.read`, `crm.schemas.contacts.write` | demo id field on contacts |
+   | `crm.schemas.deals.read`, `crm.schemas.deals.write` | pipeline stages, sample deal fields |
+   | `crm.schemas.companies.read`, `crm.schemas.companies.write` | sample id field on companies |
+   | `crm.schemas.contacts.read`, `crm.schemas.contacts.write` | sample id field on contacts |
    | `sales-email-read` | the text of logged emails |
 
    If a scope is missing, the check script prints HubSpot's error naming it.
@@ -129,17 +129,17 @@ The same six tools run against a real HubSpot account. Deals, companies and cont
    CRM_BACKEND=hubspot
    HUBSPOT_SERVICE_KEY=your-key
    ```
-4. **Load the demo data and check it:**
+4. **Load the sample data and check it:**
    ```bash
-   python scripts/seed_hubspot.py          # --reset to replace earlier demo records
+   python scripts/seed_hubspot.py          # --reset to replace earlier sample records
    python scripts/check_hubspot.py         # read-only check through a real MCP client
    ```
-   The check prints the open pipeline, the top flagged deals and one account. On the demo data the top three are Meridian Hotels, Acme Logistics and Northwind Freight.
+   The check prints the open pipeline, the top flagged deals and one account. On the sample data the top three are Meridian Hotels, Acme Logistics and Northwind Freight.
 5. Restart Claude Code / Desktop. The `crm` server now reads and writes HubSpot.
 
-**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the demo (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). Forecasts use each stage's win probability from the HubSpot pipeline settings, so Claude's weighted numbers match the weighted amounts on HubSpot's deal board. The SQLite demo uses the playbook defaults in `logic.py`, so forecast figures differ between the two backends by design; everything else is identical. For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
+**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the sample data (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). Forecasts use each stage's win probability from the HubSpot pipeline settings, so Claude's weighted numbers match the weighted amounts on HubSpot's deal board. The SQLite demo uses the playbook defaults in `logic.py`, so forecast figures differ between the two backends by design; everything else is identical. For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
 
-**Good to know:** the demo data uses `example.com` addresses, which never reach a real inbox. Demo dates are relative to the day you load them, so run `seed_hubspot.py --reset` before a demo. HubSpot search takes a few seconds to index changes; the server overlays deals it just wrote so follow-up questions still see the update. `--reset` only archives records the loader created (to HubSpot's recycle bin).
+**Good to know:** the sample data uses `example.com` addresses, which never reach a real inbox. Sample dates are relative to the day you load them, so run `seed_hubspot.py --reset` before a demo. HubSpot search takes a few seconds to index changes; the server overlays deals it just wrote so follow-up questions still see the update. `--reset` only archives records the loader created (to HubSpot's recycle bin).
 
 ---
 
@@ -150,9 +150,9 @@ src/crm_mcp/
   server.py   MCP tools, resource, prompt, logging, auth, HTTP app
   landing.html  page served at / for people who open the URL in a browser
   logic.py    business rules: staleness, priority, forecast (plain Python, unit-tested)
-  db.py       SQLite backend: data access functions, schema, demo seed
+  db.py       SQLite backend: data access functions, schema, sample seed
   hubspot.py  HubSpot backend: the same functions over the HubSpot CRM API
-  hubspot_seed.py  loads the demo dataset into a HubSpot account
+  hubspot_seed.py  loads the sample dataset into a HubSpot account
 tests/        tests that go through a real MCP client
   fake_hubspot.py  in-memory HubSpot API; test_hubspot.py checks both backends answer alike
 scripts/      HTTP smoke test, HubSpot loader and check
