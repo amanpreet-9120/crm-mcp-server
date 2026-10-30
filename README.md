@@ -82,7 +82,7 @@ python scripts/smoke_http.py http://localhost:8000/mcp     # end-to-end check
 
 ## Deploy (public link)
 
-The included `Dockerfile` runs anywhere that runs containers. With **Render**: push this folder to GitHub → New → Blueprint → pick the repo (it reads `render.yaml`, which deploys an open, read-only demo). **Railway** and **Fly.io** also detect the Dockerfile directly.
+The included `Dockerfile` runs anywhere that runs containers. With **Render**: push this folder to GitHub → New → Blueprint → pick the repo (it reads `render.yaml`, which deploys an open, read-only copy with the sample data). **Railway** and **Fly.io** also detect the Dockerfile directly.
 
 Then anyone can connect:
 
@@ -137,7 +137,7 @@ The same six tools run against a real HubSpot account. Deals, companies and cont
    The check prints the open pipeline, the top flagged deals and one account. On the sample data the top three are Meridian Hotels, Acme Logistics and Northwind Freight.
 5. Restart Claude Code / Desktop. The `crm` server now reads and writes HubSpot.
 
-**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the sample data (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). Forecasts use each stage's win probability from the HubSpot pipeline settings, so Claude's weighted numbers match the weighted amounts on HubSpot's deal board. The SQLite demo uses the playbook defaults in `logic.py`, so forecast figures differ between the two backends by design; everything else is identical. For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
+**How fields map:** `dealname`, `amount`, `dealstage`, `closedate` and `hs_next_step` are standard HubSpot properties. Stages in the default pipeline map to lead / qualified / proposal / negotiation / won / lost; stages in custom pipelines are mapped from their win probability. The loader adds three deal properties for the sample data (`mcp_sales_rep`, `mcp_last_activity_date`, `mcp_next_step_date`). Forecasts use each stage's win probability from the HubSpot pipeline settings, so Claude's weighted numbers match the weighted amounts on HubSpot's deal board. The SQLite sample CRM uses the playbook defaults in `logic.py`, so forecast figures differ between the two backends by design; everything else is identical. For a client's real portal, point the `HUBSPOT_*_PROPERTY` settings at their fields, e.g. `HUBSPOT_OWNER_PROPERTY=hubspot_owner_id` for real HubSpot users.
 
 **Good to know:** the sample data uses `example.com` addresses, which never reach a real inbox. Sample dates are relative to the day you load them, so run `seed_hubspot.py --reset` before a demo. HubSpot search takes a few seconds to index changes; the server overlays deals it just wrote so follow-up questions still see the update. `--reset` only archives records the loader created (to HubSpot's recycle bin).
 
