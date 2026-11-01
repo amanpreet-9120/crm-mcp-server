@@ -12,7 +12,7 @@ Instead, each tool matches a question a salesperson actually asks:
 - "Tell me everything about this account" → `get_account` (company + contacts + deals + recent activity in one call)
 - "How's the pipeline?" → `get_pipeline_summary`
 
-**Measured on the demo data** (≈ characters ÷ 4):
+**Measured on the sample data** (≈ characters ÷ 4):
 
 | Approach | Tokens into the model |
 |---|---|
@@ -62,7 +62,7 @@ Nothing important is held in the model's context. Every call reads current state
 
 `server.py` has no SQL. Every read and write goes through plain functions in `db.py` (`find_deals`, `get_deal`, `list_contacts`, `add_activity`, `update_deal`…) that return dicts. Validation, business rules and the error text the model sees all live above that line, so connecting a real CRM means rewriting one module, not the tools. Multi-step writes (insert an activity, bump last-activity, set the next step) happen in a single transaction inside that module.
 
-`hubspot.py` proves it: the same functions over the HubSpot API, selected with `CRM_BACKEND=hubspot`, with no changes to the tools. `tests/test_hubspot.py` loads the demo data into a fake HubSpot API through the real loader and checks that every tool returns the same answer as SQLite. Two things differ from a database and are handled in that module: HubSpot search is eventually consistent (deals just written are overlaid from a direct read for two minutes), and a write is two API calls rather than one transaction (create the activity, then update the deal). HubSpot failures such as an expired key reach the model as readable errors so it can tell the user.
+`hubspot.py` proves it: the same functions over the HubSpot API, selected with `CRM_BACKEND=hubspot`, with no changes to the tools. `tests/test_hubspot.py` loads the sample data into a fake HubSpot API through the real loader and checks that every tool returns the same answer as SQLite. Two things differ from a database and are handled in that module: HubSpot search is eventually consistent (deals just written are overlaid from a direct read for two minutes), and a write is two API calls rather than one transaction (create the activity, then update the deal). HubSpot failures such as an expired key reach the model as readable errors so it can tell the user.
 
 ## 7. Observability from day one
 
