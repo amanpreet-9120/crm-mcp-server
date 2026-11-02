@@ -10,6 +10,8 @@ It runs locally (stdio) for Claude Desktop / Claude Code, or as a hosted HTTP en
 
 ---
 
+**Overview slides:** [PDF](docs/Sales-Pipeline-Assistant.pdf) · [PowerPoint](docs/Sales-Pipeline-Assistant.pptx), a 3-slide summary of what it does, a sample run against HubSpot, and the architecture.
+
 ## What you can ask
 
 | Ask Claude | Tools it uses |
